@@ -1,10 +1,10 @@
-name: Build Patched HushMessenger Bundle
+name: Build Custom MPP
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/build-custom-mpp.yml"
 
 permissions:
   contents: write
@@ -16,188 +16,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up JDK 21
+      - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
+          distribution: temurin
           java-version: "21"
 
-      - name: Install Android SDK Platform 36 & Build Tools
-        run: |
-          export PATH=$ANDROID_HOME/cmdline-tools/16.0/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
-
-      - name: Generate custom signing key & build .mpp bundle
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          chmod +x gradlew
-          ./gradlew generateSigningKey --no-daemon || true
-          ./gradlew :patches:clean :extensions:messenger:clean :extensions:messenger:lintRelease :patches:buildAndSignBundle
-
-      - name: Verify signature
-        run: |
-          python3 scripts/bundle_signature.py verify patches/build/libs/*.mpp --public morphe-signing.pub || true
-
-      - name: Publish Release and Update patches-bundle.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add patches-bundle.json morphe-signing.pub extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java || true
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update patches-bundle.json and public key [skip ci]" && git push)
-          gh release create v1.0.${{ github.run_number }} patches/build/libs/*.mpp morphe-signing.pub patches-bundle.json --title "HushMessenger Custom MPP Release v1.0.${{ github.run_number }}" --notes "Automated release of HushMessenger custom MPP bundle" || gh release upload v1.0.${{ github.run_number }} patches/build/libs/*.mpp morphe-signing.pub patches-bundle.json --clobberworkflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/build-custom-mpp.yml"
-
-permissions:
-  contents: write
-  packages: read
-
-jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "21"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK Platform 36 & Build Tools
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0"
-
-      - name: Generate custom signing key & build .mpp bundle
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          chmod +x gradlew
-          ./gradlew generateSigningKey --no-daemon || true
-          ./gradlew :patches:clean :extensions:messenger:clean :extensions:messenger:lintRelease :patches:buildAndSignBundle
-
-      - name: Verify signature
-        run: |
-          python3 scripts/bundle_signature.py verify patches/build/libs/*.mpp --public morphe-signing.pub || true
-
-      - name: Publish Release and Update patches-bundle.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add patches-bundle.json morphe-signing.pub extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java || true
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update patches-bundle.json and public key [skip ci]" && git push)
-          gh release create v1.0.${{ github.run_number }} patches/build/libs/*.mpp morphe-signing.pub patches-bundle.json --title "HushMessenger Custom MPP Release v1.0.${{ github.run_number }}" --notes "Automated release of HushMessenger custom MPP bundle" || gh release upload v1.0.${{ github.run_number }} patches/build/libs/*.mpp morphe-signing.pub patches-bundle.json --clobber
-    paths:
-      - ".github/workflows/build-custom-mpp.yml"
-
-permissions:
-  contents: write
-  packages: read
-
-jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "21"
-
-      #  name: Set up Android SDK 36
-       #  uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK Platform 36 & Build Tools
-        run: |
-                 export PATH=$ANDROID_HOME/cmdline-tools/16.0/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-      y   es | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install Android SDK 36
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true; $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Patch CallRecording.java
-        run: |
-          python3 - << 'EOF'
-          import pathlib, re
-          p = pathlib.Path("extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java")
-          code = p.read_text(encoding="utf-8")
-          code = code.replace(
-              "if (held == null) playoutHeld = held = Settings.enabled(KEY) && Settings.available(KEY);",
-              "if (held == null || !held) playoutHeld = held = Settings.enabled(KEY) && Settings.available(KEY);",
-              1
-          )
-          code = re.sub(r"NO_SOUND_MILLIS\s*=\s*3000\b", "NO_SOUND_MILLIS = 15000", code)
-          code = code.replace(
-              "now.mix.theirs.offer(sound, bytes, track.getChannelCount(), track.getSampleRate(), now.elapsed());",
-              "if (sound == null || bytes <= 0) return;\n            ByteBuffer slice = sound.duplicate();\n            if (slice.position() > 0) slice.position(0);\n            if (bytes <= slice.capacity()) slice.limit(bytes);\n            now.mix.theirs.offer(slice, bytes, track.getChannelCount(), track.getSampleRate(), now.elapsed());",
-              1
-          )
-          code = code.replace(
-              "now.mix.mine.offer(sound, bytes, record.getChannelCount(), record.getSampleRate(), now.elapsed());",
-              "if (sound == null || bytes <= 0) return;\n            ByteBuffer slice = sound.duplicate();\n            if (slice.position() > 0) slice.position(0);\n            if (bytes <= slice.capacity()) slice.limit(bytes);\n            now.mix.mine.offer(slice, bytes, record.getChannelCount(), record.getSampleRate(), now.elapsed());",
-              1
-          )
-          code = code.replace(
-              "view.setElevation(density * 24);",
-              "view.setElevation(density * 32);\n        view.setTranslationZ(density * 32);",
-              1
-          )
-          p.write_text(code, encoding="utf-8")
-          EOF
+        run: python3 -c 'import pathlib, re; p=pathlib.Path("extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java"); c=p.read_text(encoding="utf-8"); c=c.replace("if (held == null) playoutHeld = held = Settings.enabled(KEY) && Settings.available(KEY);", "if (held == null || !held) playoutHeld = held = Settings.enabled(KEY) && Settings.available(KEY);"); c=re.sub(r"NO_SOUND_MILLIS\s*=\s*3000\b", "NO_SOUND_MILLIS = 15000", c); c=c.replace("view.setElevation(density * 24);", "view.setElevation(density * 32);\n        view.setTranslationZ(density * 32);"); p.write_text(c, encoding="utf-8")'
 
-      - name: Generate Custom Signing Key & Build .mpp Bundle
+      - name: Build Android Patches
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          chmod +x gradlew
-          ./gradlew generateSigningKey --no-daemon || true
-          ./gradlew :patches:clean :extensions:messenger:clean :extensions:messenger:lintRelease :patches:buildAndroid --no-daemon
+        run: chmod +x gradlew && ./gradlew :patches:buildAndroid --no-daemon
 
-      - name: Publish Release and Update patches-bundle.json
+      - name: Sign MPP Bundle
+        run: python3 scripts/bundle_signature.py generate --key secret.key --public morphe-signing.pub && python3 scripts/bundle_signature.py sign $(ls patches/build/libs/patches-*.mpp | head -n 1) --key secret.key
+
+      - name: Publish Release and Update Repository
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-        run: |
-          MPP_FILE=$(ls patches/build/libs/patches-*.mpp | head -n 1)
-          MPP_NAME=$(basename "$MPP_FILE")
-          TAG="v0.29.0-callfix"
-          gh release delete "$TAG" -y || true
-          gh release create "$TAG" "$MPP_FILE" --title "HushMessenger $TAG (Call Recording Fix)" --notes "Custom build with CallRecording.java fixes applied."
-          python3 - << EOF
-          import json, pathlib, datetime
-          bundle_path = pathlib.Path("patches-bundle.json")
-          data = json.loads(bundle_path.read_text(encoding="utf-8"))
-          data["version"] = "0.29.0-callfix"
-          data["created_at"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-          data["download_url"] = f"https://github.com/${REPO}/releases/download/${TAG}/${MPP_NAME}"
-          data["signature_download_url"] = ""
-          bundle_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-          EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add patches-bundle.json morphe-signing.pub extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java || true
-          git diff --cached --quiet || git commit -m "chore(release): publish custom call-recording fix bundle"
-          git push origin HEAD:main
+        run: MPP_FILE=$(ls patches/build/libs/patches-*.mpp | head -n 1) && MPP_NAME=$(basename "$MPP_FILE") && TAG="v0.29.0-callfix" && (gh release delete "$TAG" -y || true) && gh release create "$TAG" "$MPP_FILE" --title "HushMessenger $TAG (Call Recording Fix)" --notes "Custom build" && python3 -c 'import json, pathlib, datetime, os; p=pathlib.Path("patches-bundle.json"); d=json.loads(p.read_text(encoding="utf-8")); repo=os.environ.get("REPO","awniimoustar/HushMessenger"); tag="v0.29.0-callfix"; mpp=os.path.basename(os.popen("ls patches/build/libs/patches-*.mpp").read().strip().split()[0]); d["version"]=tag; d["created_at"]=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"); d["download_url"]=f"https://github.com/{repo}/releases/download/{tag}/{mpp}"; p.write_text(json.dumps(d, indent=2)+"\n", encoding="utf-8")' && git config user.name "github-actions[bot]" && git config user.email "github-actions[bot]@users.noreply.github.com" && git add patches-bundle.json morphe-signing.pub extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java && (git diff --cached --quiet || git commit -m "chore(release): publish custom call-recording fix bundle") && git push origin HEAD:main
