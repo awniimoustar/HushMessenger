@@ -60,17 +60,13 @@ jobs:
           print("Patched CallRecording.java successfully.")
           EOF
 
-      - name: Generate Signing Keypair
-        run: |
-          python3 scripts/bundle_signature.py generate --key morphe-signing.key --public morphe-signing.pub
-
       - name: Build and Sign MPP Bundle
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x gradlew
-          ./gradlew :patches:clean :extensions:messenger:clean :extensions:messenger:lintRelease :patches:buildAndroid --no-daemon
+          python3 scripts/bundle_signature.py generate --key morphe-signing.key --public morphe-signing.pub && ./gradlew :patches:clean :extensions:messenger:clean :extensions:messenger:lintRelease :patches:buildAndroid --no-daemon
 
       - name: Verify Signed MPP Bundle
         run: |
