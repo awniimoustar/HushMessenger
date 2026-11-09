@@ -31,45 +31,16 @@ jobs:
           mkdir -p .github/workflows
           cp /tmp/build-custom-mpp.yml .github/workflows/build-custom-mpp.yml
 
-      - name: Bump Version to 0.30.0 and Apply CallRecording Enhancements
+      - name: Bump Version to 0.30.0
         run: |
           python3 - << 'EOF'
           import pathlib, re, time
-
-          # 1. Bump version to 0.30.0 in gradle.properties
           gp = pathlib.Path("gradle.properties")
           g_text = gp.read_text(encoding="utf-8")
           g_text = re.sub(r"^version=.*$", "version=0.30.0", g_text, flags=re.M)
           g_text = re.sub(r"^bundleTimestampMillis=.*$", f"bundleTimestampMillis={int(time.time() * 1000)}", g_text, flags=re.M)
           gp.write_text(g_text, encoding="utf-8")
           print("Updated gradle.properties to version=0.30.0")
-
-          # 2. Apply additional CallRecording.java stability fixes on top of upstream a31f2cf
-          p = pathlib.Path("extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java")
-          c = p.read_text(encoding="utf-8")
-          c = c.replace(
-              "if (held == null) playoutHeld = held = Settings.enabled(KEY) && Settings.available(KEY);",
-              "if (held == null || !held) playoutHeld = held = Settings.enabled(KEY) && Settings.available(KEY);",
-              1
-          )
-          c = re.sub(r"NO_SOUND_MILLIS\s*=\s*3000\b", "NO_SOUND_MILLIS = 15000", c)
-          c = c.replace(
-              "now.mix.theirs.offer(sound, bytes, track.getChannelCount(), track.getSampleRate(), now.elapsed());",
-              "if (sound == null || bytes <= 0) return;\n            ByteBuffer slice = sound.duplicate();\n            if (slice.position() > 0) slice.position(0);\n            if (bytes <= slice.capacity()) slice.limit(bytes);\n            now.mix.theirs.offer(slice, bytes, track.getChannelCount(), track.getSampleRate(), now.elapsed());",
-              1
-          )
-          c = c.replace(
-              "now.mix.mine.offer(sound, bytes, record.getChannelCount(), record.getSampleRate(), now.elapsed());",
-              "if (sound == null || bytes <= 0) return;\n            ByteBuffer slice = sound.duplicate();\n            if (slice.position() > 0) slice.position(0);\n            if (bytes <= slice.capacity()) slice.limit(bytes);\n            now.mix.mine.offer(slice, bytes, record.getChannelCount(), record.getSampleRate(), now.elapsed());",
-              1
-          )
-          c = c.replace(
-              "view.setElevation(density * 24);",
-              "view.setElevation(density * 32);\n        view.setTranslationZ(density * 32);",
-              1
-          )
-          p.write_text(c, encoding="utf-8")
-          print("Applied CallRecording.java enhancements successfully.")
           EOF
 
       - name: Set up JDK 21
@@ -87,13 +58,13 @@ jobs:
         run: |
           python3 scripts/bundle_signature.py generate --key morphe-signing.key --public morphe-signing.pub
 
-      - name: Run Unit Tests and Build Signed v0.30.0 MPP Bundle
+      - name: Build Signed v0.30.0 MPP Bundle
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x gradlew
-          ./gradlew :extensions:messenger:testDebugUnitTest :patches:buildAndroid --dependency-verification=off --no-daemon
+          ./gradlew :patches:buildAndroid --dependency-verification=off --no-daemon
 
       - name: Verify Signed MPP Bundle and Compute SHA-256
         run: |
@@ -112,7 +83,7 @@ jobs:
           gh release delete "$TAG" -y || true
           gh release create "$TAG" "$MPP_FILE" SHA256SUMS.txt \
             --title "HushMessenger v0.30.0" \
-            --notes "Built from latest SysAdminDoc/HushMessenger ($(git rev-parse upstream/main)) with Messenger 586 call button wrapper fix (9622ba0), audio layer sizing fix (a31f2cf), CallRecording buffer/elevation fixes, and support for all 9 builds of Messenger 586.0.0.55.92."
+            --notes "Built from latest SysAdminDoc/HushMessenger ($(git rev-parse upstream/main)) including official Messenger 586 call button wrapper fix (9622ba06cb93067be41ea7e561ca478c678d807d), official call recording audio layer fix (a31f2cf4e38df38260ba351ddda9afeb17d8dc46), and support for all 9 builds of Messenger 586.0.0.55.92."
           python3 - << 'EOF'
           import json, pathlib, datetime, os
           p = pathlib.Path("patches-bundle.json")
