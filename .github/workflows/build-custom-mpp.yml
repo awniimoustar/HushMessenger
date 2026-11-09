@@ -1,4 +1,4 @@
-name: Build Patched HushMessenger Bundle
+name: Build Latest HushMessenger Bundle
 
 on:
   workflow_dispatch:
@@ -19,6 +19,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Sync with latest upstream SysAdminDoc/HushMessenger
+        run: |
+          git remote add upstream https://github.com/SysAdminDoc/HushMessenger.git || git remote set-url upstream https://github.com/SysAdminDoc/HushMessenger.git
+          git fetch upstream main
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+          echo "Upstream HEAD commit: $UPSTREAM_SHA"
+          git checkout upstream/main -- patches extensions gradle scripts build.gradle.kts settings.gradle.kts settings-gradle.lockfile gradle.properties gradlew gradlew.bat README.md CHANGELOG.md patches-list.json
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -29,49 +37,26 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null || true
 
-      - name: Patch CallRecording.java
+      - name: Generate Signing Keypair
         run: |
-          python3 - << 'EOF'
-          import pathlib, re
-          p = pathlib.Path("extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java")
-          c = p.read_text(encoding="utf-8")
-          c = c.replace(
-              "if (held == null) playoutHeld = held = Settings.enabled(KEY) && Settings.available(KEY);",
-              "if (held == null || !held) playoutHeld = held = Settings.enabled(KEY) && Settings.available(KEY);",
-              1
-          )
-          c = re.sub(r"NO_SOUND_MILLIS\s*=\s*3000\b", "NO_SOUND_MILLIS = 15000", c)
-          c = c.replace(
-              "now.mix.theirs.offer(sound, bytes, track.getChannelCount(), track.getSampleRate(), now.elapsed());",
-              "if (sound == null || bytes <= 0) return;\n            ByteBuffer slice = sound.duplicate();\n            if (slice.position() > 0) slice.position(0);\n            if (bytes <= slice.capacity()) slice.limit(bytes);\n            now.mix.theirs.offer(slice, bytes, track.getChannelCount(), track.getSampleRate(), now.elapsed());",
-              1
-          )
-          c = c.replace(
-              "now.mix.mine.offer(sound, bytes, record.getChannelCount(), record.getSampleRate(), now.elapsed());",
-              "if (sound == null || bytes <= 0) return;\n            ByteBuffer slice = sound.duplicate();\n            if (slice.position() > 0) slice.position(0);\n            if (bytes <= slice.capacity()) slice.limit(bytes);\n            now.mix.mine.offer(slice, bytes, record.getChannelCount(), record.getSampleRate(), now.elapsed());",
-              1
-          )
-          c = c.replace(
-              "view.setElevation(density * 24);",
-              "view.setElevation(density * 32);\n        view.setTranslationZ(density * 32);",
-              1
-          )
-          p.write_text(c, encoding="utf-8")
-          print("Patched CallRecording.java successfully.")
-          EOF
+          if [ ! -f morphe-signing.key ]; then
+            python3 scripts/bundle_signature.py generate --key morphe-signing.key --public morphe-signing.pub
+          fi
 
-      - name: Build and Sign MPP Bundle
+      - name: Run Tests and Build Signed MPP Bundle
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x gradlew
-          python3 scripts/bundle_signature.py generate --key morphe-signing.key --public morphe-signing.pub && ./gradlew :patches:clean :extensions:messenger:clean :extensions:messenger:lintRelease :patches:buildAndroid --no-daemon
+          ./gradlew :patches:test :extensions:messenger:testDebugUnitTest :patches:buildAndroid --dependency-verification=off --no-daemon
+          python3 -m unittest discover -s scripts/tests -v
 
-      - name: Verify Signed MPP Bundle
+      - name: Verify Signed MPP Bundle and Compute SHA-256
         run: |
           MPP_FILE=$(ls patches/build/libs/patches-*.mpp | head -n 1)
           python3 scripts/bundle_signature.py verify "$MPP_FILE" --public morphe-signing.pub
+          sha256sum "$MPP_FILE" | tee SHA256SUMS.txt
 
       - name: Publish Release and Update patches-bundle.json
         env:
@@ -80,24 +65,32 @@ jobs:
         run: |
           MPP_FILE=$(ls patches/build/libs/patches-*.mpp | head -n 1)
           MPP_NAME=$(basename "$MPP_FILE")
-          TAG="v0.29.0-callfix"
+          UPSTREAM_SHORT=$(git rev-parse --short upstream/main)
+          TAG="v0.29.0-${UPSTREAM_SHORT}"
           gh release delete "$TAG" -y || true
-          gh release create "$TAG" "$MPP_FILE" --title "HushMessenger $TAG (Call Recording Fix)" --notes "Custom build with CallRecording.java fixes applied."
+          gh release create "$TAG" "$MPP_FILE" SHA256SUMS.txt \
+            --title "HushMessenger $TAG (Latest Upstream $UPSTREAM_SHORT)" \
+            --notes "Built from SysAdminDoc/HushMessenger commit $(git rev-parse upstream/main) including call button wrapper fix 9622ba06cb93067be41ea7e561ca478c678d807d and call recording fix a31f2cf4e38df38260ba351ddda9afeb17d8dc46."
           python3 - << 'EOF'
-          import json, pathlib, datetime, os
+          import json, pathlib, datetime, os, subprocess
           p = pathlib.Path("patches-bundle.json")
           d = json.loads(p.read_text(encoding="utf-8"))
           repo = os.environ["REPO"]
+          short_sha = subprocess.check_output(["git", "rev-parse", "--short", "upstream/main"], text=True).strip()
+          tag = f"v0.29.0-{short_sha}"
           mpp_files = sorted(pathlib.Path("patches/build/libs").glob("patches-*.mpp"))
           mpp_name = mpp_files[0].name
-          d["version"] = "0.29.0-callfix"
+          pub_key = pathlib.Path("morphe-signing.pub").read_text(encoding="utf-8").strip()
+          d["version"] = f"0.29.0-{short_sha}"
           d["created_at"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-          d["download_url"] = f"https://github.com/{repo}/releases/download/v0.29.0-callfix/{mpp_name}"
+          d["download_url"] = f"https://github.com/{repo}/releases/download/{tag}/{mpp_name}"
           d["signature_download_url"] = ""
+          d["public_key"] = pub_key
           p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
           EOF
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add patches-bundle.json morphe-signing.pub extensions/messenger/src/main/java/app/hushmessenger/extension/CallRecording.java
-          git diff --cached --quiet || git commit -m "chore(release): publish custom call-recording fix bundle"
+          git add -A
+          git reset -- morphe-signing.key || true
+          git diff --cached --quiet || git commit -m "chore(release): publish bundle built from upstream $(git rev-parse --short upstream/main)"
           git push origin HEAD:main
